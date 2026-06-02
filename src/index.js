@@ -8,16 +8,20 @@ import { GameManager } from './gameManager.js';
 const app = express();
 const server = http.createServer(app);
 
+// CORS конфигурация для production
+const corsOptions = {
+  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  credentials: true,
+  optionsSuccessStatus: 200,
+};
+
 // Socket.IO сервер с CORS поддержкой
 const io = new SocketIOServer(server, {
-  cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
-    methods: ['GET', 'POST'],
-  },
+  cors: corsOptions,
 });
 
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Менеджер игр (управляет всеми комнатами и состояниями)
