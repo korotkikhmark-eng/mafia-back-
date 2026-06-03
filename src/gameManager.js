@@ -318,6 +318,7 @@ export class GameManager {
       if (killedPlayer) {
         killedPlayer.isDead = true;
         results.killed = killedPlayer.name;
+        results.killedRole = killedPlayer.role;
       }
     } else if (targetToKill && heals.has(targetToKill)) {
       results.healed = room.players.find((p) => p.id === targetToKill)?.name;

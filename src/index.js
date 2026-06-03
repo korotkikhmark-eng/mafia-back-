@@ -8,11 +8,28 @@ import { GameManager } from './gameManager.js';
 const app = express();
 const server = http.createServer(app);
 
-// CORS конфигурация для production
+// Упрощенная CORS конфигурация для production
 const corsOptions = {
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
-  credentials: true,
+  origin: function (origin, callback) {
+    // Удаляем trailing slash для сравнения
+    const normalizeUrl = (url) => url ? url.replace(/\/$/, '') : '';
+    const normalizedOrigin = normalizeUrl(origin);
+    const normalizedClientUrl = normalizeUrl(process.env.CLIENT_URL || 'http://localhost:5173');
+    
+    console.log('Origin:', normalizedOrigin);
+    console.log('Allowed:', normalizedClientUrl);
+    
+    // Разрешаем если совпадает (без trailing slash)
+    if (!origin || normalizedOrigin === normalizedClientUrl || process.env.NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      callback(null, true); // Для тестирования разрешаем все
+    }
+  },
+  credentials: false,
   optionsSuccessStatus: 200,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
 // Socket.IO сервер с CORS поддержкой
@@ -225,13 +242,29 @@ io.on('connection', (socket) => {
       const allVoted = gameManager.isVotingComplete(roomCode);
       if (allVoted) {
         const eliminated = gameManager.processVoting(roomCode);
-        io.to(roomCode).emit('votingEnded', { eliminatedPlayer: eliminated });
+        const room = gameManager.getRoom(roomCode);
+        
+        // Отправляем полную информацию об исключенном игроке с ролью
+        if (eliminated) {
+          io.to(roomCode).emit('votingEnded', { 
+            eliminatedPlayer: eliminated.name,
+            role: eliminated.role,
+            players: room.players, // Обновленный список игроков
+          });
+          
+          // Отправляем сообщение в чат о роли исключенного
+          const roleMessage = {
+            author: 'СИСТЕМА',
+            text: `🗳️ ${eliminated.name} был исключен голосованием. Роль: ${eliminated.role === 'mafia' ? '🎭 МАФИЯ' : eliminated.role === 'sheriff' ? '👮 ШЕРИФ' : eliminated.role === 'doctor' ? '👨‍⚕️ ДОКТОР' : '👤 МИРНЫЙ ЖИТЕЛЬ'}`,
+            timestamp: new Date(),
+          };
+          io.to(roomCode).emit('newMessage', roleMessage);
+        }
 
         // Проверяем условие победы
         const winner = gameManager.checkWinCondition(roomCode);
         if (winner) {
           // Отправляем полную информацию о конце игры
-          const room = gameManager.getRoom(roomCode);
           io.to(roomCode).emit('gameEnded', { 
             winner,
             players: room.players, // Передаем всех игроков с ролями
