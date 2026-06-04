@@ -168,6 +168,19 @@ io.on('connection', (socket) => {
         return callback({ success: false, error: 'Невозможно выполнить действие' });
       }
 
+      // Проверка что игрок жив
+      if (player.isDead) {
+        return callback({ success: false, error: 'Мертвые не могут выполнять действия!' });
+      }
+
+      // Мафия не может выбирать своих союзников для убийства
+      if (player.role === 'mafia') {
+        const targetPlayer = room.players.find((p) => p.id === targetPlayerId);
+        if (targetPlayer && targetPlayer.role === 'mafia') {
+          return callback({ success: false, error: 'Мафия не может убивать друг друга!' });
+        }
+      }
+
       gameManager.recordNightAction(roomCode, player.id, player.role, targetPlayerId);
       callback({ success: true });
     } catch (error) {
@@ -244,21 +257,34 @@ io.on('connection', (socket) => {
         const eliminated = gameManager.processVoting(roomCode);
         const room = gameManager.getRoom(roomCode);
         
+        console.log('🗳️ Результат голосования:', eliminated?.name, eliminated?.role);
+        
         // Отправляем полную информацию об исключенном игроке с ролью
-        if (eliminated) {
+        if (eliminated && eliminated.name && eliminated.role) {
+          // Отправляем votingEnded событие
           io.to(roomCode).emit('votingEnded', { 
             eliminatedPlayer: eliminated.name,
             role: eliminated.role,
-            players: room.players, // Обновленный список игроков
+            players: room.players,
           });
           
           // Отправляем сообщение в чат о роли исключенного
+          const roleEmojis = {
+            'mafia': '🎭 МАФИЯ',
+            'sheriff': '👮 ШЕРИФ',
+            'doctor': '👨‍⚕️ ДОКТОР',
+            'villager': '👤 МИРНЫЙ ЖИТЕЛЬ'
+          };
+          const roleText = roleEmojis[eliminated.role] || '👤 НЕИЗВЕСТНО';
+          
           const roleMessage = {
-            author: 'СИСТЕМА',
-            text: `🗳️ ${eliminated.name} был исключен голосованием. Роль: ${eliminated.role === 'mafia' ? '🎭 МАФИЯ' : eliminated.role === 'sheriff' ? '👮 ШЕРИФ' : eliminated.role === 'doctor' ? '👨‍⚕️ ДОКТОР' : '👤 МИРНЫЙ ЖИТЕЛЬ'}`,
-            timestamp: new Date(),
+            playerId: 'system',
+            playerName: 'СИСТЕМА',
+            message: `🗳️ ${eliminated.name} был исключен голосованием. Роль: ${roleText}`,
           };
           io.to(roomCode).emit('newMessage', roleMessage);
+        } else {
+          console.error('❌ Ошибка: eliminated пуст или некорректен', eliminated);
         }
 
         // Проверяем условие победы

@@ -98,8 +98,15 @@ export class GameManager {
       while (roles.length < playerCount) {
         roles.push('villager');
       }
-    } else if (playerCount >= 7) {
-      // 7+ игроков: 3 мафии, 1 шериф, 1 доктор, остальные мирные
+    } else if (playerCount === 7) {
+      // 7 игроков: 2 мафии, 1 шериф, 1 доктор, остальные мирные
+      roles.push('mafia', 'mafia');
+      roles.push('sheriff', 'doctor');
+      while (roles.length < playerCount) {
+        roles.push('villager');
+      }
+    } else if (playerCount >= 8) {
+      // 8+ игроков: 3 мафии, 1 шериф, 1 доктор, остальные мирные
       roles.push('mafia', 'mafia', 'mafia');
       roles.push('sheriff', 'doctor');
       while (roles.length < playerCount) {
@@ -143,13 +150,35 @@ export class GameManager {
     room.completedNightActions.clear();
     room.nightStartTime = Date.now(); // Сохраняем время начала ночи
 
-    // Если ночь - начинаем с доктора
+    // Если ночь - начинаем с первой живой роли
     if (phase === 'night') {
-      room.nightSubPhase = 'doctor';
-      this.io.to(roomCode).emit('nightSubPhaseChanged', {
-        subPhase: 'doctor',
-        message: '🌙 Ночь: Доктор выбирает кого спасать...',
-      });
+      const subPhaseOrder = ['doctor', 'mafia', 'sheriff'];
+      
+      // Находим первую подфазу с живым игроком
+      let firstPhase = null;
+      for (const rolePhase of subPhaseOrder) {
+        const hasAlivePlayer = room.players.some(p => !p.isDead && p.role === rolePhase);
+        if (hasAlivePlayer) {
+          firstPhase = rolePhase;
+          break;
+        }
+      }
+      
+      if (firstPhase) {
+        room.nightSubPhase = firstPhase;
+        const messages = {
+          doctor: '🌙 Ночь: Доктор выбирает кого спасать...',
+          mafia: '🌙 Ночь: Мафия выбирает жертву...',
+          sheriff: '🌙 Ночь: Шериф проверяет участника...',
+        };
+        this.io.to(roomCode).emit('nightSubPhaseChanged', {
+          subPhase: firstPhase,
+          message: messages[firstPhase],
+        });
+      } else {
+        // Нет живых ролей для ночных действий - переходим в день
+        this.startPhase(roomCode, 'day');
+      }
     }
 
     if (phase === 'day') {
@@ -174,9 +203,20 @@ export class GameManager {
     const subPhaseOrder = ['doctor', 'mafia', 'sheriff'];
     const currentIndex = subPhaseOrder.indexOf(room.nightSubPhase);
     
-    if (currentIndex < subPhaseOrder.length - 1) {
-      // Есть еще подфазы
-      room.nightSubPhase = subPhaseOrder[currentIndex + 1];
+    // Пропускаем подфазы если нет живых игроков этой роли
+    let nextPhase = null;
+    for (let i = currentIndex + 1; i < subPhaseOrder.length; i++) {
+      const phaseRole = subPhaseOrder[i];
+      const hasAlivePlayer = room.players.some(p => !p.isDead && p.role === phaseRole);
+      if (hasAlivePlayer) {
+        nextPhase = phaseRole;
+        break;
+      }
+    }
+    
+    if (nextPhase) {
+      // Есть еще подфаза с живыми игроками
+      room.nightSubPhase = nextPhase;
       room.completedNightActions.clear();
       
       const messages = {
@@ -186,11 +226,11 @@ export class GameManager {
       };
 
       this.io.to(roomCode).emit('nightSubPhaseChanged', {
-        subPhase: room.nightSubPhase,
-        message: messages[room.nightSubPhase],
+        subPhase: nextPhase,
+        message: messages[nextPhase],
       });
     } else {
-      // Ночь закончилась, переходим на день
+      // Нет больше подфаз - заканчиваем ночь
       this.processNightPhase(roomCode);
       const nightResults = this.getNightResults(roomCode);
       
@@ -236,6 +276,12 @@ export class GameManager {
   recordNightAction(roomCode, playerId, role, targetPlayerId) {
     const room = this.rooms.get(roomCode);
     if (!room) throw new Error('Комната не найдена');
+
+    // Проверяем что игрок жив
+    const player = room.players.find(p => p.id === playerId);
+    if (player && player.isDead) {
+      throw new Error('Мертвые не могут выполнять действия!');
+    }
 
     // Проверяем что роль соответствует текущей подфазе
     const roleToSubPhase = {
@@ -293,18 +339,18 @@ export class GameManager {
         .sort((a, b) => b[1] - a[1])[0][0];
     }
 
-    // Обработка действий доктора
+    // Обработка действий доктора (только живые)
     room.nightActions.forEach((targetId, playerId) => {
       const player = room.players.find((p) => p.id === playerId);
-      if (player && player.role === 'doctor') {
+      if (player && player.role === 'doctor' && !player.isDead) {
         heals.set(targetId, true);
       }
     });
 
-    // Обработка действий шерифа
+    // Обработка действий шерифа (только живые)
     room.nightActions.forEach((targetId, playerId) => {
       const player = room.players.find((p) => p.id === playerId);
-      if (player && player.role === 'sheriff') {
+      if (player && player.role === 'sheriff' && !player.isDead) {
         const target = room.players.find((p) => p.id === targetId);
         if (target) {
           checks.set(playerId, target.role);
